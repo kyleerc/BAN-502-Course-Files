@@ -5,7 +5,6 @@ output:
 ---
 # Final Project: Phase 1
 ## MIS 502
-## Kylee Casner
 ## 06/13/2026
 
 
