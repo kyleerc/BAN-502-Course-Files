@@ -18,7 +18,6 @@ trucks <- read_csv("trucks-1.csv")
 Question 1: Plot the relationship between Distance and Speeding.
 Which characteristics (select all that apply) of the relationship between Distance and Speeding seems most
 apparent?
-Answer: B and C
 
 A. There appears to be more speeding among the drivers with smaller Distances
 B. The data points are arranged in what appear to be four clusters 
@@ -32,7 +31,6 @@ ggplot(trucks, aes(x=Distance, y=Speeding)) + geom_point()
 Question 2: Create a new data frame called “trucks_cleaned” that contains the scaled and centered variables.
 Two notes: 1) The “predictor” variables in the recipe are “Distance” and “Speeding” and 2) There is no need to create dummy variables as there are no categorical variables in the data. Be sure that you do NOT include the Driver_ID variable.
 What is the maximum value (to four decimal places) of the Distance variable in the scaled dataset?
-Answer: 3.1560 
 
 ```{r}
 trucks_scaled = scale(trucks)
@@ -76,7 +74,6 @@ ggplot(augmented_trucks, aes(x=Distance, y=Speeding,color=factor(.cluster))) + g
 
 
 Question 4: Create a visualization to show how the clusters appear from values of k from 1 to 8. Use a random number seed of 412. Which value of k appears to be most appropriate for this data?
-Answer: 2
 
 ```{r}
 set.seed(412)
@@ -103,7 +100,7 @@ facet_wrap(~ k)
 
 
 Question 5: Create a plot of k versus within cluster sum of squares. Hint: We did this in the first clustering lecture. What number of clusters appears to be ideal based on this plot?
-Answer: 4
+
 
 ```{r}
 ggplot(clusterings, aes(k, tot.withinss)) +
@@ -113,7 +110,6 @@ ggplot(clusterings, aes(k, tot.withinss)) +
 ```
 
 Question 6: Repeat Question 3 for the number of clusters that you correctly identifed in Question 5. Use the same random number seed as in Task 3. Create an appropriate visualization. Which statements (select all that apply) appear to be most apparent about the clusters created in this question?
-Answer: B, C, D
 
 A. One cluster is composed of short distance drivers with a low proportion of speeding.
 B. One cluster is composed of long distance drivers with a high proportion of speeding.
