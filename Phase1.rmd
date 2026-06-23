@@ -1,0 +1,262 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+# Final Project: Phase 1
+## MIS 502
+## Kylee Casner
+## 06/13/2026
+
+
+# Phase 1 Project description
+For Phase 1 you will conduct a thorough exploratory/descriptive analysis of the dataset. Please **DO NOT** build any predictive models (e.g., logistic regression, trees, etc.) in this phase. Assume that your "audience" for this work are non-technical decision-makers.   
+
+
+
+
+```{r loading libraries, warning=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(ggcorrplot)
+library(gridExtra)
+library(mice)
+library(VIM)
+library(naniar)
+library(skimr)
+library(UpSetR)
+library(knitr)
+library(kableExtra)
+```
+
+
+
+
+
+# Bringing in data set
+```{r}
+train <- read_csv("train.csv")
+
+train = train %>% mutate_if(is.character, as.factor) %>% mutate (attribute_2 = as_factor(attribute_2)) %>% mutate (attribute_3 = as_factor(attribute_3)) %>% select(-id)
+
+str(train)
+
+```
+
+
+
+
+
+# Looking at missing values
+```{r}
+skim(train) #lots of data missing
+gg_miss_case(train) 
+gg_miss_fct(x=train, fct=failure) #measurements 14-17 high number of missing data
+gg_miss_upset(train, nsets=24) #doesn't seem like there's variables that are always missing together
+
+#how many is lost if remove all NAs
+lost_train = train %>% drop_na()
+nrow(train) - nrow(lost_train)
+
+#would lose 14387 variables - over half the dataset - will want to impute
+```
+
+
+
+
+
+
+# Looking at individual variables of interest
+```{r}
+ggplot(train, aes(x=measurement_0)) + labs(title="Distribution of Measurement 0", x = "Measurement 0", y="Count") + geom_histogram() + theme_bw()
+ggplot(train, aes(x=measurement_1)) + geom_histogram() + labs(title="Distribution of Measurement 1", x = "Measurement 1", y="Count") + geom_histogram() + theme_bw()
+ggplot(train, aes(x=measurement_2)) + geom_histogram() + labs(title="Distribution of Measurement 2", x = "Measurement 2", y="Count") + geom_histogram() + theme_bw()
+ggplot(train, aes(x=measurement_3)) + geom_histogram()
+ggplot(train, aes(x=measurement_4)) + geom_histogram()
+ggplot(train, aes(x=measurement_5)) + geom_histogram()
+ggplot(train, aes(x=measurement_6)) + geom_histogram()
+ggplot(train, aes(x=measurement_7)) + geom_histogram()
+ggplot(train, aes(x=measurement_8)) + geom_histogram()
+ggplot(train, aes(x=measurement_9)) + geom_histogram()
+ggplot(train, aes(x=measurement_10)) + geom_histogram()
+ggplot(train, aes(x=measurement_11)) + geom_histogram()
+ggplot(train, aes(x=measurement_12)) + geom_histogram()
+ggplot(train, aes(x=measurement_13)) + geom_histogram()
+ggplot(train, aes(x=measurement_14)) + geom_histogram()
+ggplot(train, aes(x=measurement_15)) + geom_histogram()
+ggplot(train, aes(x=measurement_16)) + geom_histogram()
+ggplot(train, aes(x=measurement_17)) + geom_histogram()
+```
+
+
+
+
+
+# Visualizing variable relationships to failure
+```{r}
+product_code = ggplot(train, aes (x = product_code, fill=failure)) + geom_bar(position = "fill")
+loading = ggplot(train, aes (x = loading, y=failure)) + geom_boxplot()
+attribute_0 = ggplot(train, aes (x = attribute_0, fill=failure)) + geom_bar(position = "fill")
+attribute_1 = ggplot(train, aes (x = attribute_1, fill=failure)) + geom_bar(position = "fill")
+attribute_2 = ggplot(train, aes (x = attribute_2, fill=failure)) + geom_bar(position = "fill")
+attribute_3 = ggplot(train, aes (x = attribute_3, fill=failure)) + geom_bar(position = "fill")
+measurement_0 = ggplot(train, aes (x = measurement_0, y=failure)) + geom_boxplot()
+measurement_1 = ggplot(train, aes (x = measurement_1, y=failure)) + geom_boxplot()
+measurement_2 = ggplot(train, aes (x = measurement_2, y=failure)) + geom_boxplot()
+measurement_3 = ggplot(train, aes (x = measurement_3, y=failure)) + geom_boxplot()
+measurement_4 = ggplot(train, aes (x = measurement_4, y=failure)) + geom_boxplot()
+measurement_5 = ggplot(train, aes (x = measurement_5, y=failure)) + geom_boxplot()
+measurement_6 = ggplot(train, aes (x = measurement_6, y=failure)) + geom_boxplot()
+measurement_7 = ggplot(train, aes (x = measurement_7, y=failure)) + geom_boxplot()
+measurement_8 = ggplot(train, aes (x = measurement_8, y=failure)) + geom_boxplot()
+measurement_9 = ggplot(train, aes (x = measurement_9, y=failure)) + geom_boxplot()
+measurement_10 = ggplot(train, aes (x = measurement_10, y=failure)) + geom_boxplot()
+measurement_11 = ggplot(train, aes (x = measurement_11, y=failure)) + geom_boxplot()
+measurement_12 = ggplot(train, aes (x = measurement_12, y=failure)) + geom_boxplot()
+measurement_13 = ggplot(train, aes (x = measurement_13, y=failure)) + geom_boxplot()
+measurement_14 = ggplot(train, aes (x = measurement_14, y=failure)) + geom_boxplot()
+measurement_15 = ggplot(train, aes (x = measurement_15, y=failure)) + geom_boxplot()
+measurement_16 = ggplot(train, aes (x = measurement_16, y=failure)) + geom_boxplot()
+measurement_17 = ggplot(train, aes (x = measurement_17, y=failure)) + geom_boxplot()
+
+
+grid.arrange(product_code, loading)
+grid.arrange(attribute_0, attribute_1, attribute_2, attribute_3)
+grid.arrange(measurement_0, measurement_1, measurement_2, measurement_3)
+grid.arrange(measurement_4, measurement_5, measurement_6, measurement_7)
+grid.arrange(measurement_8, measurement_9, measurement_10, measurement_11)
+grid.arrange(measurement_12, measurement_13, measurement_14, measurement_15)
+grid.arrange(measurement_16, measurement_17)
+
+grid.arrange(product_code, loading, attribute_0, attribute_1, attribute_3)
+grid.arrange(measurement_0, measurement_1, measurement_2, measurement_3, measurement_4, measurement_5, measurement_6, measurement_7, measurement_8, measurement_9, measurement_10, measurement_11, measurement_12, measurement_13, measurement_14, measurement_15, measurement_16, measurement_17)
+```
+
+
+
+
+
+# Formatting potentially important variables
+```{r}
+loading = ggplot(train, aes (x = loading, y=failure)) + geom_boxplot() + labs(title = "Relationship between loading and product failure", x="Loading", y="Failure") + theme_bw()
+loading
+
+measurement_17 = ggplot(train, aes (x = measurement_17, y=failure)) + geom_boxplot() + labs(title = "Relationship between measurement 17 and product failure", x="Measurement 17", y="Failure") + theme_bw()
+measurement_17
+
+attribute_2 = ggplot(train, aes (x = attribute_2, fill=failure)) + labs(title= "Failure rates by attribute 2", y= "Proportion of failure results", x= "Attribute 2") + geom_bar(position = "fill") + theme_bw()
+attribute_2
+
+product_code = ggplot(train, aes (x = product_code, fill=failure)) + labs(title= "Failure rates by product code", y= "Proportion of failure results", x= "Product Code") + geom_bar(position = "fill") + theme_bw()
+product_code
+
+```
+
+
+
+
+
+# Looking at correlations between all variables
+```{r}
+ggcorr(train, size=2)   
+
+#Looks like measurement 17 may be correlated with measurement 4-9, taking a closer look
+
+ggpairs(train, columns = c("failure", "measurement_4", "measurement_5", "measurement_6", "measurement_7", "measurement_8", "measurement_9", "measurement_17"))
+
+#measurement 5 and 8 strongest correlation with measurement 17
+
+
+```
+
+
+
+
+
+# Looking deeper at correlations
+```{r}
+measurement_5x17 = ggplot(train, aes (x = measurement_5, y=measurement_17)) + labs(title = "Measurement 5 and Measurement 17 Correlation", x = "Measurement 5", y="Measurement 17") + geom_point() + geom_smooth(method = "lm") + theme_bw() 
+measurement_5x17
+#as measurement 5 increases, so does measurement 17
+
+measurement_8x17 = ggplot(train, aes (x = measurement_8, y=measurement_17)) + labs(title = "Measurement 8 and Measurement 17 Correlation", x = "Measurement 8", y="Measurement 17") + geom_point() + geom_smooth(method = "lm") + theme_bw() 
+measurement_8x17
+#as measurement 5 increases, so does measurement 17
+
+```
+
+
+
+
+
+# Is there an interaction effect?
+```{r}
+recipe = recipe(failure ~ measurement_5 + measurement_8 + measurement_17, train)
+
+model = logistic_reg( mode="classification") %>%
+  set_engine("glm")
+
+
+workflow = 
+  workflow() %>% 
+  add_model(model) %>% 
+  add_recipe(recipe)
+
+lm_fit = fit(workflow, train)
+summary(lm_fit$fit$fit$fit)
+
+car::vif(lm_fit$fit$fit$fit)
+
+#VIF < 4: likely don't need to be worried about interaction effects
+
+```
+
+
+
+
+
+# Closer look at the attributes
+```{r}
+attribute_0x1 = ggplot(train, aes (x = attribute_0, fill=attribute_1)) + geom_bar()
+attribute_0x2 = ggplot(train, aes (x = attribute_0, fill=attribute_2)) + geom_bar()
+attribute_0x3 = ggplot(train, aes (x = attribute_0, fill=attribute_3)) + geom_bar()
+attribute_1x0 = ggplot(train, aes (x = attribute_1, fill=attribute_0)) + geom_bar()
+attribute_1x2 = ggplot(train, aes (x = attribute_1, fill=attribute_2)) + geom_bar()
+attribute_1x3 = ggplot(train, aes (x = attribute_1, fill=attribute_3)) + geom_bar()
+attribute_2x0 = ggplot(train, aes (x = attribute_2, fill=attribute_0)) + geom_bar()
+attribute_2x1 = ggplot(train, aes (x = attribute_2, fill=attribute_1)) + geom_bar()
+attribute_2x3 = ggplot(train, aes (x = attribute_2, fill=attribute_3)) + geom_bar()
+grid.arrange(attribute_0x1, attribute_0x2, attribute_0x3)
+grid.arrange(attribute_1x0, attribute_1x2, attribute_1x3)
+grid.arrange(attribute_2x0, attribute_2x1, attribute_2x3)
+
+cont_table = train %>% count(attribute_0, attribute_1, attribute_2, attribute_3)
+cont_table
+```
+
+
+
+
+
+# Since there are only 5 combinations of attributes, combine them all into 1 column to identify patterns
+```{r}
+#first renaming attributes 0 and 1 to make it cleaner
+train = train %>%  mutate(attribute_0 = fct_recode(attribute_0, "7" = "material_7", "5" = "material_5")) %>% mutate(attribute_1 = fct_recode(attribute_1, "8" = "material_8", "5" = "material_5", "6" = "material_6"))
+
+combined_train = train %>% 
+  unite("all_attributes", attribute_0, attribute_1, attribute_2, attribute_3, sep = "", remove = FALSE) %>% 
+  mutate(all_attributes = as_factor(all_attributes))
+head(combined_train)
+
+#Matching to product codes
+table = combined_train %>% count(product_code, all_attributes)
+table
+
+#Getting a clean table with all attributes
+finaltable = combined_train %>% count(product_code, attribute_0, attribute_1, attribute_2, attribute_3)
+productattributes = as.data.frame(finaltable)
+finaltable = kable(productattributes, caption = "Product Attributes", align = "c", col.names = c("Product Code", "Attribute 0", "Attribute 1", "Attribute 2", "Attribute 3", "Number of samples"))
+finaltable
+
+```
