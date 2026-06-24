@@ -1,0 +1,727 @@
+---
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+loading and measurement 17
+```{r loading libraries}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(ggcorrplot)
+library(gridExtra)
+library(mice)
+library(VIM)
+library(naniar)
+library(skimr)
+library(UpSetR)
+
+library(tidyverse)
+library(tidymodels)
+library(e1071)
+library(ROCR)
+
+library(rpart) #for classification trees
+library(rpart.plot) #for plotting trees
+library(RColorBrewer) #better visualization of classification trees
+library(rattle) #better visualization of classification trees
+
+library(usemodels)
+library(glmnet)
+
+
+library(VIM) #visualizing missingness
+library(ranger) #for random forests
+library(randomForest) #also for random forests
+library(caret)
+library(skimr)
+library(GGally)
+library(gridExtra)
+library(vip) #variable importance
+
+library(xgboost)
+
+library(nnet)
+
+library(knitr)
+library(kableExtra)
+
+```
+
+# Bringing in data set
+```{r}
+supersoaker <- read_csv("train.csv")
+
+supersoaker = supersoaker %>% mutate(failure = as_factor(failure)) %>% mutate(product_code = as_factor(product_code)) %>% mutate(attribute_0 = as_factor(attribute_0)) %>% mutate(attribute_1 = as_factor(attribute_1)) %>% mutate(attribute_2 = as_factor(attribute_2)) %>% mutate (attribute_3 = as_factor(attribute_3)) %>% select(-id)
+
+str(supersoaker)
+
+```
+
+# Imputing data
+```{r}
+imputation = mice(supersoaker, m=5, method = "pmm", printflag=FALSE)
+complete_supersoaker = complete(imputation) 
+summary(complete_supersoaker)
+
+```
+
+# Testing/training split
+```{r}
+data_split = initial_split(complete_supersoaker, prop=.7, strata=failure)
+train = training(data_split)
+test = testing(data_split)
+
+```
+
+# Setting up folds
+```{r}
+folds = vfold_cv(train, v=5)
+```
+
+
+
+
+
+
+
+# Linear Regression
+```{r}
+lm_recipe  = recipe(failure ~., train) %>%
+  step_dummy (all_nominal(),-all_outcomes()) 
+
+lm_model = logistic_reg(mode="classification") %>%
+  set_engine("glm")
+
+lm_workflow =  workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(lm_recipe)
+
+lm_fit  = fit(lm_workflow, train)
+
+summary(lm_fit$fit$fit$fit)
+
+
+predictions = predict(lm_fit, train, type= "prob") [2]
+ROCRprediction = prediction(predictions, train$failure)
+ROCRperformance = performance(ROCRprediction, "tpr", "fpr")
+as.numeric(performance(ROCRprediction, "auc")@y.values)
+
+opt.cut = function(perf, pred){
+cut.ind = mapply(FUN=function(x, y, p){
+d = (x - 0)^2 + (y-1)^2
+ind = which(d == min(d))
+c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+cutoff = p[[ind]])
+}, perf@x.values, perf@y.values, pred@cutoffs)
+}
+print(opt.cut(ROCRperformance, ROCRprediction))
+
+table = table(train$failure,predictions > .2036858)
+
+(table[1,1] + table[2,2])/nrow(train) #accuracy
+table[2,2]/(table[2,2] + table[2,1]) #sensitivity
+table[1,1]/(table[1,1] + table[1,2]) #specificity
+
+```
+
+
+# Lasso regression - first testing the significant variables identified in the linear regression model 
+```{r}
+lasso_recipe = recipe(failure ~ loading + measurement_2 + measurement_4 + measurement_6 + measurement_7 + measurement_8, train) %>% 
+  step_dummy(all_nominal(),-all_outcomes())
+
+
+lasso_model = logistic_reg(penalty = tune(), mixture = 1) %>% 
+set_mode("classification") %>% 
+set_engine("glmnet")
+
+lasso_workflow =  workflow() %>% 
+  add_recipe(lasso_recipe) %>% 
+  add_model(lasso_model)
+
+glmnet_grid = grid_regular(penalty(), levels = 200)
+
+glmnet_tune <- 
+  tune_grid(lasso_workflow, resamples = folds, 
+            grid = glmnet_grid, metrics = metric_set(mn_log_loss))
+```
+
+Visualizing tuning parameters
+```{r}
+glmnet_tune %>%
+  collect_metrics() %>%
+  ggplot(aes(penalty, mean)) +
+  geom_errorbar(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  theme(legend.position = "none")
+```
+
+Finding best mn_log_loss
+```{r}
+best_mnlog = glmnet_tune %>%
+  select_best(metric="mn_log_loss")
+best_mnlog
+```
+
+Finalizing fit
+```{r}
+final_lasso = lasso_workflow %>% finalize_workflow(best_mnlog)
+lasso_fit = fit(final_lasso, train)
+
+tidy(lasso_fit)
+```
+
+Running predictions on training set
+```{r}
+predictions = predict(lasso_fit, train, type= "prob")[2]
+ROCRpred = prediction(predictions, train$failure)
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+```
+
+Finding cutoff to balance of sensitivity and specificity
+```{r}
+opt.cut = function(perf, pred){
+cut.ind = mapply(FUN=function(x, y, p){
+d = (x - 0)^2 + (y-1)^2
+ind = which(d == min(d))
+c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+cutoff = p[[ind]])
+}, perf@x.values, perf@y.values, pred@cutoffs)
+}
+best_cutoff = opt.cut(ROCRperf, ROCRpred)
+```
+
+Seeing cutoff score accuracy
+```{r}
+lm_table_train = table(train$failure, predictions > best_cutoff[3])
+accuracy_lm_table_train = (lm_table_train[1,1] + lm_table_train[2,2])/nrow(train)
+accuracy_lm_table_train
+```
+
+Predictions on the testing set
+```{r}
+predictions_test = predict(lasso_fit, test, type= "prob")[2]
+ROCRpred = prediction(predictions_test, test$failure)
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+```
+
+```{r}
+lm_table_test = table(test$failure, predictions_test > best_cutoff)
+accuracy_lm_table_test = (lm_table_test[1,1] + lm_table_test[2,2])/nrow(test)
+accuracy_lm_table_test
+```
+
+
+
+
+# Typical Lasso regression, using all variables
+
+```{r}
+lasso_recipe_all = recipe(failure ~., train) %>% 
+  step_unknown(all_nominal_predictors()) %>% #added this step since the final testing set has different attributes and product codes than found in the training set
+  step_dummy(all_nominal(),-all_outcomes())
+
+
+lasso_model_all = logistic_reg(penalty = tune(), mixture = 1) %>% 
+set_mode("classification") %>% 
+set_engine("glmnet")
+
+lasso_workflow_all =  workflow() %>% 
+  add_recipe(lasso_recipe_all) %>% 
+  add_model(lasso_model_all)
+
+glmnet_grid_all = grid_regular(penalty(), levels = 100)
+
+glmnet_tune_all <- 
+  tune_grid(lasso_workflow_all, resamples = folds, 
+            grid = glmnet_grid, metrics = metric_set(mn_log_loss))
+```
+
+```{r}
+best_mnlog_all = glmnet_tune_all %>%
+  select_best(metric="mn_log_loss")
+```
+
+```{r}
+final_lasso_all = lasso_workflow_all %>% finalize_workflow(best_mnlog_all)
+lasso_fit_all = fit(final_lasso_all, train)
+
+tidy(lasso_fit_all)
+```
+
+```{r}
+predictions_all = predict(lasso_fit_all, train, type= "prob")[2]
+ROCRpred_all = prediction(predictions_all, train$failure)
+ROCRperf_all = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf_all, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+```
+
+```{r}
+opt.cut = function(perf, pred){
+cut.ind = mapply(FUN=function(x, y, p){
+d = (x - 0)^2 + (y-1)^2
+ind = which(d == min(d))
+c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+cutoff = p[[ind]])
+}, perf@x.values, perf@y.values, pred@cutoffs)
+}
+best_cutoff = opt.cut(ROCRperf_all, ROCRpred_all)
+```
+
+```{r}
+lm_table_train_all = table(train$failure, predictions_all > best_cutoff[3])
+accuracy_lm_table_train_all = (lm_table_train_all[1,1] + lm_table_train_all[2,2])/nrow(train)
+accuracy_lm_table_train_all
+
+```
+
+
+```{r}
+predictions_test_all = predict(lasso_fit_all, test, type= "prob")[2]
+ROCRpred_alltest = prediction(predictions_test_all, test$failure)
+ROCRperf_alltest = performance(ROCRpred_alltest, "tpr", "fpr")
+
+lm_table_test_all = table(test$failure, predictions_test_all > best_cutoff[3])
+accuracy_lm_table_test_all = (lm_table_test_all[1,1] + lm_table_train_all[2,2])/nrow(test)
+accuracy_lm_table_test_all
+```
+Better accuracy with all predictors - Loading, Measurements: 2, 4, 8, 11, 13, 17, Product code, Attributes: 0, 2 used in the model 
+
+
+
+
+
+
+
+# Classification tree
+```{r}
+tree_recipe = recipe(failure ~., train) %>%
+  step_dummy(all_nominal(),-all_outcomes())
+
+tree_model = decision_tree() %>% 
+ set_engine("rpart", model = TRUE) %>% 
+set_mode("classification")
+
+tree_workflow =  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(tree_recipe)
+
+tree_fit = fit(tree_workflow, train)
+
+tree_fit %>%
+  pull_workflow_fit() %>%
+  pluck("fit") 
+
+tree = tree_fit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+
+rpart.plot(tree)
+```
+End tree does not have any branches - only categorizes "No" 
+
+
+
+
+
+
+
+
+
+# Random forest
+
+```{r}
+rf_recipe = recipe(failure ~., train) %>%
+  step_dummy(all_nominal(),-all_outcomes())
+
+rf_model = rand_forest() %>% 
+  set_engine("ranger", importance = "permutation") %>% 
+  set_mode("classification")
+
+rf_workflow =  workflow() %>% 
+ add_model(rf_model) %>% 
+ add_recipe(rf_recipe)
+
+rf_fit = fit(rf_workflow, train)
+rf_fit
+
+pred = predict(rf_fit, train)
+confusionMatrix(pred$.pred_class,train$failure, positive="Yes")
+
+rf_fit %>%
+extract_fit_parsnip() %>%
+vip(geom = "point")
+```
+
+Tuning mtry and min_n
+```{r}
+rf_model = rand_forest(mtry = tune(), min_n = tune(), trees = 100) %>%
+  set_engine("ranger", importance = "permutation") %>% 
+  set_mode("classification")
+
+rf_recipe = recipe(failure ~., train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+rf_workflow =  workflow() %>% 
+ add_model(rf_model) %>% 
+ add_recipe(rf_recipe)
+
+```
+
+Tuning cont. 
+```{r}
+rf_residuals = tune_grid(rf_workflow, resamples = folds, grid = 20)
+
+rf_residuals %>%
+collect_metrics() %>%
+filter(.metric == "accuracy") %>%
+select(mean, min_n, mtry) %>%
+pivot_longer(min_n:mtry,
+values_to = "value",
+ names_to = "parameter") %>%
+ggplot(aes(value, mean, color = parameter)) +
+geom_point(show.legend = FALSE) +
+facet_wrap(~parameter, scales = "free_x") +
+labs(x = NULL, y = "Accuracy")
+```
+
+Setting tuning parameters based on graph above
+```{r}
+rf_grid = grid_regular(
+  mtry(range = c(0, 15)), 
+  min_n(range = c(50, 150)),
+  levels = 5)
+
+```
+
+Creating another graph of accuracy with selected parameters
+```{r}
+tuned_residuals = tune_grid(rf_workflow, resamples = folds, grid = rf_grid)
+```
+```{r}
+tuned_residuals %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "Accuracy")
+```
+
+Selecting best parameters
+```{r}
+best_rf = select_best(tuned_residuals, metric="accuracy")
+
+final_rf = finalize_workflow(
+  rf_workflow,
+  best_rf
+)
+
+final_rf
+```
+
+Finalizing and saving fit
+```{r}
+final_rf_fit = fit(final_rf, train)
+saveRDS(final_rf_fit, "final_rf_fit.rds")
+```
+
+```{r}
+final_rf_fit = readRDS("final_rf_fit.rds") 
+final_rf_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+```
+
+
+Running predictions on training data
+```{r}
+trainpredrf = predict(final_rf_fit, train)
+cm_rf_train = confusionMatrix(trainpredrf$.pred_class, train$failure, 
+                positive = "Yes")
+accuracy_rf_train = cm_rf_train$overall["Accuracy"]
+accuracy_rf_train
+```
+
+
+Running predictions on testing data
+```{r}
+testpredrf = predict(final_rf_fit, test)
+cm_rf_test = confusionMatrix(testpredrf$.pred_class, test$failure, 
+                positive = "Yes")
+accuracy_rf_test = cm_rf_test$overall["Accuracy"]
+accuracy_rf_test
+```
+
+
+
+
+
+
+
+
+
+
+
+# XGBoost
+
+Getting starting code
+```{r}
+#use_xgboost (failure ~., data = train)
+```
+
+```{r}
+
+start_time = Sys.time()
+
+xgboost_recipe <- 
+  recipe(formula = failure ~ ., data = train) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot=TRUE) %>%
+  step_zv(all_predictors())
+  
+
+xgboost_spec <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(),
+    loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost") 
+
+xgboost_workflow <- 
+  workflow() %>% 
+  add_recipe(xgboost_recipe) %>% 
+  add_model(xgboost_spec) 
+
+xgboost_tune <-
+  tune_grid(xgboost_workflow, resamples = folds, grid = 25)
+
+end_time = Sys.time()
+end_time - start_time 
+
+```
+
+Best parameters
+```{r}
+best_xgboost = select_best(xgboost_tune, metric = "accuracy")
+xgboost_finalwf= finalize_workflow(xgboost_workflow, best_xgboost)
+
+```
+
+Finalizing fit
+```{r}
+xgboost_finalfit = fit(xgboost_finalwf, train)
+saveRDS(xgboost_finalfit, "xgboostfit")
+
+```
+
+Running predictions on training data
+```{r}
+xgboost_finalfit = readRDS("xgboostfit")
+trainpredxg = predict(xgboost_finalfit, train)
+cm_xgb_train = confusionMatrix(trainpredxg$.pred_class,train$failure, positive="Yes")
+accuracy_xgb_train = cm_xgb_train$overall["Accuracy"]
+accuracy_xgb_train
+
+```
+
+Running predictions on testing data
+```{r}
+testpredxg = predict(xgboost_finalfit, test)
+cm_xgb_test = confusionMatrix(testpredxg$.pred_class,test$failure, positive="Yes")
+accuracy_xgb_test = cm_xgb_test$overall["Accuracy"]
+accuracy_xgb_test
+```
+
+
+
+# Neural Network
+```{r}
+nn_start = Sys.time()
+
+nn_recipe = recipe(failure ~., train) %>%
+  step_normalize(all_predictors(), -all_nominal()) %>%  
+  step_dummy(all_nominal(), -all_outcomes())
+
+
+nn_model = mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
+  set_mode("classification") %>% 
+  set_engine("nnet", verbose = 0)
+
+nn_workflow = workflow() %>% 
+  add_model(nn_model) %>% 
+  add_recipe(nn_recipe)
+
+nn_tune = tune_grid(nn_workflow, resamples = folds, grid = 25)
+
+nn_end = Sys.time()
+
+nn_start-nn_end
+
+```
+
+Looking at the tuning parameters
+```{r}
+nn_tune %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  select(mean, hidden_units, penalty, epochs) %>%
+  pivot_longer(hidden_units:epochs, values_to = "value", names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) + geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") + labs(x = NULL, y = "Accuracy")
+
+```
+
+Fitting the best parameters
+```{r}
+best_nn = select_best(nn_tune, metric = "accuracy")
+
+final_nn = finalize_workflow(nn_workflow, best_nn)
+final_nn
+final_nn_fit = fit(final_nn, train)
+
+saveRDS(final_nn_fit, "nnfit")
+
+```
+
+Making predictions on training data
+```{r}
+
+final_nn_fit = readRDS("nnfit")
+nn_predtrain = predict(final_nn_fit, train)
+cm_nn_train = confusionMatrix(nn_predtrain$.pred_class,train$failure, positive="Yes")
+accuracy_nn_train = cm_nn_train$overall["Accuracy"]
+accuracy_nn_train
+```
+
+Making predictions on testing data
+```{r}
+nn_predtest = predict(final_nn_fit, test)
+cm_nn_test = confusionMatrix(nn_predtest$.pred_class,test$failure, positive="Yes")
+accuracy_nn_test = cm_nn_test$overall["Accuracy"]
+accuracy_nn_test
+```
+
+
+# Running models on final test set
+
+## Importing and imputing the final test set
+```{r}
+new_test <- read_csv("test.csv")
+
+new_test = new_test %>% mutate(product_code = as_factor(product_code)) %>% mutate(attribute_0 = as_factor(attribute_0)) %>% mutate(attribute_1 = as_factor(attribute_1)) %>% mutate(attribute_2 = as_factor(attribute_2)) %>% mutate (attribute_3 = as_factor(attribute_3))
+
+```
+
+```{r}
+imputation_final = mice(new_test, m=5, method = "pmm", printflag=FALSE)
+final_test = complete(imputation_final) 
+summary(final_test)
+
+```
+
+
+# Lasso model seemed most promising - only one that categorized more than 20 instances as failed (greater variance from the No Information Rate)
+```{r}
+predictions_final = predict(lasso_fit_all, final_test, type= "prob")[2]
+  
+
+predictions_final = predictions_final %>% mutate(FAILURE = if_else(.pred_Yes > best_cutoff[3], "Yes", "No"))
+
+final_lm = data.frame(final_test$id, predictions_final$FAILURE)
+
+final_lm = final_lm %>% mutate(FAILURE = predictions_final$FAILURE) %>% mutate(ID = final_test$id) %>% select(ID, FAILURE)
+head(final_lm)
+
+write_csv(final_lm, "final_lm.csv")
+```
+
+
+## Running Random Forests (technically had the highest accuracy on the test/train data)
+
+```{r}
+final_rf_pred = predict(final_rf_fit, final_test)
+final_rf = final_test %>% mutate(FAILURE = final_rf_pred$.pred_class) %>% mutate(ID = id) %>% select(ID, FAILURE)
+
+write_csv(final_rf, "final_rf.csv")
+
+```
+
+
+
+## Also want to see how XGBoost runs 
+
+```{r}
+final_testpredxg = predict(xgboost_finalfit, final_test)
+
+final = final_test %>% mutate(FAILURE = final_testpredxg$.pred_class) %>% mutate(ID = id) %>% select(ID, FAILURE)
+
+
+write_csv(final, "final.csv")
+
+```
+
+
+After submission, the Lasso model performed the best. 
+
+
+
+
+
+
+# Building visualizations for the presentation
+
+## Showing accuracy tests
+
+```{r}
+# Lasso Model
+lasso_df = data.frame(Dataset = c("Training", "Testing"), Accuracy = c(accuracy_lm_table_train_all, accuracy_lm_table_test_all))
+lasso_table = kable(lasso_df, caption = "Lasso Regression", align = "c")
+lasso_table
+
+# Random Forest Model
+rf_df = data.frame(Dataset = c("Training", "Testing"), Accuracy = c(accuracy_rf_train, accuracy_rf_test))
+rf_table = kable(rf_df, caption = "Random Forest", align = "c")
+rf_table
+
+# XGBoost 
+xgb_df = data.frame(Dataset = c("Training", "Testing"), Accuracy = c(accuracy_xgb_train, accuracy_xgb_test))
+xgb_table = kable(xgb_df, caption = "XGBoost", align = "c")
+xgb_table
+
+# Neural Network
+nn_df = data.frame(Dataset = c("Training", "Testing"), Accuracy = c(accuracy_nn_train, accuracy_nn_test))
+nn_table = kable(nn_df, caption = "Neural Network", align = "c")
+nn_table
+
+```
+
+## Confusion matrixes 
+
+```{r}
+
+#Lasso
+lm_table_test_all
+
+#Random Forest
+cm_rf_test$table
+
+#XGBoost
+cm_xgb_test$table
+
+
+#Neural Network
+cm_nn_test$table
+
+```
+
