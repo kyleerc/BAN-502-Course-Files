@@ -5,7 +5,6 @@ output:
   pdf_document: default
 ---
 
-loading and measurement 17
 ```{r loading libraries}
 library(tidyverse)
 library(tidymodels)
